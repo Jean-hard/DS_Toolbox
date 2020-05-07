@@ -1,3 +1,4 @@
 ﻿{
-	"name": "ToolboxEngine"
+	"name": "ToolboxEngine",
+	"references": []
 }
