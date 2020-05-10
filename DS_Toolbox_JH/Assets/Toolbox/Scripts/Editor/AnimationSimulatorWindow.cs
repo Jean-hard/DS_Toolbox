@@ -1,11 +1,11 @@
 ﻿using System.Collections;
 using System.Collections.Generic;
 using UnityEditor;
-using UnityEngine;
 using UnityEngine.SceneManagement;
 using UnityEditor.Animations;
 using UnityEditor.SceneManagement;
-using System;
+using UnityEngine;
+using ToolboxEngine;
 
 namespace ToolboxEditor
 {
@@ -15,9 +15,13 @@ namespace ToolboxEditor
 
         private float _clipSampleValue = 0;
         private float _speed = 0;
+        private float animTime = 0;
+        private float _currentAnimTime = 0;
+        private float _repeatOffset = 0;
 
         public static string[] tabs = new string[]
         {
+            "Creator",
             "Animator Selector",
             "Clip Handler"
         };
@@ -37,7 +41,11 @@ namespace ToolboxEditor
 
         private Vector3 _currentAnimatorPosition = new Vector3();
 
-        private Scene _currentScene;
+        private AnimationSimulator _animSimulator;
+
+        //Create settings
+        private Vector3 _instantiatePosition = new Vector3();
+        private Animator _selectedAnimatorToCreate;
 
         [MenuItem("Toolbox/Animation Simulator")]
         static void InitWindow()
@@ -50,20 +58,63 @@ namespace ToolboxEditor
 
         private void OnGUI()
         {
+            if (!_isInitialized)
+            {
+                _currentAnimator = _FindAnimatorComponentsInScene()[0];
+                _animClipsArr = FindAnimClips(_currentAnimator);
+                _animNamesArr = FindAnimNames(_animClipsArr);
+                _isInitialized = true;
+            }
+
             _tabIndex = GUILayout.Toolbar(_tabIndex, tabs);
 
             switch (_tabIndex)
             {
                 case 0:
-                    _GUITabsAnimatorSelector(); break;
+                    _GUITabsCreator(); break;
                 case 1:
+                    _GUITabsAnimatorSelector(); break;
+                case 2:
                     _GUITabsClipHandler(); break;
+            }
+        }
+
+        private void _GUITabsCreator()
+        {
+            GUILayout.Space(10f);
+            EditorGUILayout.LabelField("Select an animator to instantiate :", EditorStyles.boldLabel);
+
+            GUILayout.Space(10f);
+            AnimPrefabsData animPrefabsData = _FindAnimPrefabsDataInProject();
+            Animator[] animPrefabs = animPrefabsData.animPrefabsArr;
+            if (null != animPrefabs && animPrefabs.Length > 0)
+            {
+                foreach (Animator animatorPrefab in animPrefabs)
+                {
+                    if (GUILayout.Button(animatorPrefab.name))
+                    {
+                        _selectedAnimatorToCreate = animatorPrefab;
+                    }
+                }
+            }
+
+            if(_selectedAnimatorToCreate != null)
+            {
+                GUILayout.Space(30f);
+                _instantiatePosition = EditorGUILayout.Vector3Field("To position : ", _instantiatePosition);
+
+                GUILayout.Space(10f);
+                if (GUILayout.Button("Create " + _selectedAnimatorToCreate))
+                {
+                    Instantiate(_selectedAnimatorToCreate, _instantiatePosition, new Quaternion(0f, 180f, 0f, 0f));
+                }
             }
         }
 
         private void _GUITabsAnimatorSelector()
         {
             _clipSampleValue = 0;
+            _selectedAnimatorToCreate = null;
 
             EditorApplication.update -= _OnEditorPositionUpdate;
 
@@ -75,14 +126,6 @@ namespace ToolboxEditor
             if (null == _animatorComponentsArr)
             {
                 _animatorComponentsArr = _FindAnimatorComponentsInScene();
-            }
-
-            if (!_isInitialized)
-            {
-                _animClipsArr = FindAnimClips(_currentAnimator);
-                _animNamesArr = FindAnimNames(_animClipsArr);
-                _currentScene = EditorSceneManager.GetActiveScene();
-                _isInitialized = true;
             }
 
 
@@ -100,6 +143,7 @@ namespace ToolboxEditor
                     EditorGUIUtility.PingObject(animator.gameObject);
                     _currentAnimator = animator;
                     _currentAnimatorPosition = _currentAnimator.transform.position;
+                    _currentAnimIndex = 0;
 
                     _animClipsArr = FindAnimClips(_currentAnimator);
                     _animNamesArr = FindAnimNames(_animClipsArr);
@@ -109,7 +153,9 @@ namespace ToolboxEditor
 
         private void _GUITabsClipHandler()
         {
-            if(null == _currentAnimator)
+            _selectedAnimatorToCreate = null;
+
+            if (null == _currentAnimator)
             {
                 EditorGUILayout.LabelField("No animator selected", EditorStyles.boldLabel);
                 return;
@@ -124,7 +170,15 @@ namespace ToolboxEditor
                 //CLIP
                 EditorGUILayout.BeginVertical(GUI.skin.box);
                 EditorGUILayout.LabelField("Animation Clip", EditorStyles.boldLabel);
-                _currentAnimIndex = EditorGUILayout.Popup("Current Anim", _currentAnimIndex, _animNamesArr);
+                //_currentAnimIndex = EditorGUILayout.Popup("Current Anim", _currentAnimIndex, _animNamesArr);
+                for(int i = 0; i < _animClipsArr.Length; i++)
+                {
+                    if (GUILayout.Button(_animClipsArr[i].name))
+                    {
+                        _currentAnimIndex = i;
+                        StopAnim();
+                    }
+                }
                 EditorGUILayout.EndVertical();
 
                 //SPEED
@@ -134,18 +188,44 @@ namespace ToolboxEditor
                 _speed = EditorGUILayout.Slider(_speed, 0f, 2f);
                 EditorGUILayout.EndVertical();
 
+                //LOOP OFFSET
+                if (_isPlaying)
+                {
+                    GUILayout.Space(10f);
+                    EditorGUILayout.BeginVertical(GUI.skin.box);
+                    EditorGUILayout.LabelField("Repeating Offset", EditorStyles.boldLabel);
+                    _repeatOffset = EditorGUILayout.FloatField(_repeatOffset);
+
+                    EditorGUILayout.EndVertical();
+                }
+
                 //SAMPLE
                 GUILayout.Space(10f);
-                EditorGUILayout.BeginVertical(GUI.skin.box);
-                EditorGUILayout.LabelField("Sampler", EditorStyles.boldLabel);
-                
-                AnimationClip animClip = _animClipsArr[_currentAnimIndex];
-                _clipSampleValue = EditorGUILayout.Slider(_clipSampleValue, 0f, animClip.length);
-                animClip.SampleAnimation(_currentAnimator.gameObject, _clipSampleValue);
-                EditorGUILayout.EndVertical();
+                if (!_isPlaying)
+                {
+                    EditorGUILayout.BeginVertical(GUI.skin.box);
+                    EditorGUILayout.LabelField("Sampler", EditorStyles.boldLabel);
 
+                    AnimationClip animClip = _animClipsArr[_currentAnimIndex];
+                    _clipSampleValue = EditorGUILayout.Slider(_clipSampleValue, 0f, animClip.length);
+                    animClip.SampleAnimation(_currentAnimator.gameObject, _clipSampleValue);
+                    EditorGUILayout.EndVertical();
+                }
                 _currentAnimator.transform.position = _currentAnimatorPosition;
                 _currentAnimator.transform.rotation = new Quaternion(0f, 180f, 0f, 0f);
+
+                //INFORMATIONS
+                if (_isPlaying)
+                {
+                    EditorGUILayout.BeginVertical(GUI.skin.box);
+                    EditorGUILayout.LabelField("Infos", EditorStyles.boldLabel);
+                    
+                    AnimationClip animClip = _animClipsArr[_currentAnimIndex];
+                    EditorGUILayout.LabelField("Anim Time : " + _currentAnimTime + "/" + animClip.length);
+                    EditorGUILayout.LabelField("Looping : " + animClip.isLooping.ToString()); 
+
+                    EditorGUILayout.EndVertical();
+                }
 
                 //PLAY AND STOP BUTTON
                 GUILayout.Space(20f);
@@ -193,16 +273,17 @@ namespace ToolboxEditor
             EditorApplication.update -= _OnEditorUpdate;
             AnimationMode.StopAnimationMode();
             _isPlaying = false;
-            //_currentAnimator = null;
         }
 
         private void _OnEditorUpdate()
         {
             if (!_isPlaying) return;
-            float animTime = Time.realtimeSinceStartup - _editorLastTime;
+            animTime = Time.realtimeSinceStartup - _editorLastTime;
             AnimationClip animClip = _animClipsArr[_currentAnimIndex];
             animTime *= _speed;
-            animTime %= animClip.length;
+            _currentAnimTime = animTime;
+            _currentAnimTime %= animClip.length;
+            animTime %= animClip.length + _repeatOffset/3;
             AnimationMode.SampleAnimationClip(_currentAnimator.gameObject, animClip, animTime);
 
             _currentAnimator.transform.position = _currentAnimatorPosition;
@@ -216,7 +297,6 @@ namespace ToolboxEditor
             _currentAnimator.transform.rotation = new Quaternion(0f, 180f, 0f, 0f);
         }
 
-
         private Animator[] _FindAnimatorComponentsInScene()
         {
             List<Animator> animatorComponentsList = new List<Animator>();
@@ -224,7 +304,7 @@ namespace ToolboxEditor
             {
                 animatorComponentsList.AddRange(rootGameObject.GetComponentsInChildren<Animator>());
             }
-
+            
             return animatorComponentsList.ToArray();
         }
 
@@ -256,6 +336,23 @@ namespace ToolboxEditor
             }
 
             return resultList.ToArray();
+        }
+
+        private AnimPrefabsData _FindAnimPrefabsDataInProject()
+        {
+            string[] fileGuidsArr = AssetDatabase.FindAssets("t: " + typeof(AnimPrefabsData)); //Trouve les assets par leur guid
+            if (fileGuidsArr.Length > 0)
+            {
+                string assetPath = AssetDatabase.GUIDToAssetPath(fileGuidsArr[0]);
+                return AssetDatabase.LoadAssetAtPath<AnimPrefabsData>(assetPath);
+            }
+            else
+            {
+                AnimPrefabsData animPrefabsData = ScriptableObject.CreateInstance<AnimPrefabsData>();
+                AssetDatabase.CreateAsset(animPrefabsData, "Assets/AnimPrefabsData.asset");
+                AssetDatabase.SaveAssets();
+                return animPrefabsData;
+            }
         }
     }
 }

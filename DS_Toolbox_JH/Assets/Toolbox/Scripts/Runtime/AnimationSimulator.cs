@@ -6,16 +6,27 @@ namespace ToolboxEngine
 {
     public class AnimationSimulator : MonoBehaviour
     {
-        // Start is called before the first frame update
-        void Start()
-        {
+        private AnimationClip[] allAnimClipsArr = null;
+        private float[] allAnimClipsOffsetArr = null;
 
+        public void UpdateAnimClipsArr(AnimationClip[] newAnimClipArr)
+        {
+            allAnimClipsArr = newAnimClipArr;
         }
 
-        // Update is called once per frame
-        void Update()
+        public AnimationClip[] GetAllAnimClips()
         {
+            return allAnimClipsArr;
+        }
 
+        public void UpdateAnimClipsOffsetArr(float[] newAnimClipOffsetArr)
+        {
+            allAnimClipsOffsetArr = newAnimClipOffsetArr;
+        }
+
+        public float[] GetAllAnimClipsOffset()
+        {
+            return allAnimClipsOffsetArr;
         }
     }
 }
